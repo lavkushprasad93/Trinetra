@@ -493,7 +493,7 @@ async def detect_image(file: UploadFile = File(...), modality: str = Form("rgb")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     modality = websocket.query_params.get("modality", "rgb").lower()
-    camera_source = websocket.query_params.get("source", "server").lower()
+    camera_source = websocket.query_params.get("source", "browser").lower()
     if modality not in SUPPORTED_MODALITIES:
         await websocket.close(code=1008, reason="Choose modality 'rgb' or 'ir'.")
         return
