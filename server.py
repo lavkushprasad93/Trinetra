@@ -492,25 +492,30 @@ async def detect_image(file: UploadFile = File(...), modality: str = Form("rgb")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     modality = websocket.query_params.get("modality", "rgb").lower()
+    camera_source = websocket.query_params.get("source", "server").lower()
     if modality not in SUPPORTED_MODALITIES:
         await websocket.close(code=1008, reason="Choose modality 'rgb' or 'ir'.")
+        return
+    if camera_source not in {"server", "browser"}:
+        await websocket.close(code=1008, reason="Choose camera source 'server' or 'browser'.")
         return
 
     active_detector = detectors.get(modality)
     active_model_status = model_states[modality]["status"]
     active_model_name = f"YOLO11s ({modality.upper()})" if active_detector else None
-    camera_stream.start()
     send_lock = asyncio.Lock()
 
     async def send_payload(payload: dict[str, Any]) -> None:
         async with send_lock:
             await websocket.send_text(json.dumps(payload))
 
-    def status_payload(has_webcam: bool) -> dict[str, Any]:
+    def status_payload(has_webcam: bool, source: str = camera_source) -> dict[str, Any]:
         live_status = (
             "ACTIVE"
             if has_webcam and active_detector is not None
             else "NO_CAMERA"
+            if not has_webcam and source == "server"
+            else "WAITING_FOR_CAMERA"
             if not has_webcam
             else "MODEL_UNAVAILABLE"
         )
@@ -519,6 +524,7 @@ async def websocket_endpoint(websocket: WebSocket):
             "modality": modality,
             "model_status": active_model_status,
             "model_name": active_model_name,
+            "camera_source": source,
             "has_webcam": has_webcam,
             "sensor_status": {
                 "rgb": {
@@ -530,7 +536,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     "status": model_states["ir"]["status"],
                     "model_loaded": "ir" in detectors,
                     "is_active": modality == "ir",
-                    "live_camera_connected": False,
+                    "live_camera_connected": has_webcam and modality == "ir",
                 },
                 "live_inference": {
                     "modality": modality,
@@ -544,6 +550,106 @@ async def websocket_endpoint(websocket: WebSocket):
                 },
             },
         }
+
+    if camera_source == "browser":
+        frame_number = 0
+        camera_active = False
+        max_frame_bytes = 2_000_000
+        await send_payload(status_payload(False, "browser"))
+        try:
+            while True:
+                message = await websocket.receive()
+                if message["type"] == "websocket.disconnect":
+                    break
+
+                frame_bytes = message.get("bytes")
+                if frame_bytes is None:
+                    if message.get("text") == '{"type":"camera_stopped"}' and camera_active:
+                        camera_active = False
+                        await send_payload(status_payload(False, "browser"))
+                    continue
+
+                if not frame_bytes or len(frame_bytes) > max_frame_bytes:
+                    await send_payload({
+                        "type": "error",
+                        "message": "Camera frame must be a JPEG smaller than 2 MB.",
+                    })
+                    continue
+
+                encoded_frame = np.frombuffer(frame_bytes, dtype=np.uint8)
+                frame = cv2.imdecode(encoded_frame, cv2.IMREAD_COLOR)
+                if frame is None:
+                    await send_payload({
+                        "type": "error",
+                        "message": "Could not decode the browser camera frame.",
+                    })
+                    continue
+
+                frame_height, frame_width = frame.shape[:2]
+                if frame_width > 1280 or frame_height > 720:
+                    await send_payload({
+                        "type": "error",
+                        "message": "Camera frame dimensions must not exceed 1280×720.",
+                    })
+                    continue
+
+                frame_number += 1
+                if not camera_active:
+                    camera_active = True
+                    await send_payload(status_payload(True, "browser"))
+
+                detections: list[dict[str, Any]] = []
+                inference_ms = 0.0
+                inference_error = None
+                if active_detector is not None:
+                    try:
+                        detections, inference_ms = await asyncio.to_thread(
+                            active_detector.predict,
+                            frame,
+                        )
+                    except Exception as error:
+                        inference_error = str(error)
+                        print(f"[STREAM] {modality.upper()} inference failed: {error}")
+
+                preview_encoded, preview_buffer = cv2.imencode(
+                    ".jpg",
+                    frame,
+                    [cv2.IMWRITE_JPEG_QUALITY, 65],
+                )
+                if not preview_encoded:
+                    await send_payload({
+                        "type": "error",
+                        "message": "Could not encode the processed camera frame.",
+                    })
+                    continue
+
+                await send_payload({
+                    "type": "frame",
+                    "frame": "data:image/jpeg;base64,"
+                    + base64.b64encode(preview_buffer).decode("ascii"),
+                    "frame_size": [frame.shape[1], frame.shape[0]],
+                    "frame_number": frame_number,
+                    "modality": modality,
+                    "camera_source": "browser",
+                    "has_webcam": True,
+                })
+                await send_payload({
+                    "type": "detections",
+                    "detections": detections,
+                    "inference_ms": inference_ms,
+                    "frame_number": frame_number,
+                    "modality": modality,
+                    "model_status": active_model_status,
+                    "model_name": active_model_name,
+                    "error": inference_error,
+                })
+        except WebSocketDisconnect:
+            print("[STREAM] Browser camera WebSocket client disconnected.")
+        except Exception as error:
+            print(f"[STREAM] Browser camera WebSocket error: {error}")
+        return
+
+    camera_stream.start()
 
     async def stream_latest_frames() -> None:
         last_frame_number = -1

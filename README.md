@@ -49,7 +49,7 @@ npm run dev
 Access the command center at `http://localhost:5173`. The backend listens on `http://localhost:8080`.
 Run only one backend process at a time. If port 8080 is already in use, stop the existing server with `Ctrl+C` in its terminal before starting another; the existing server process ID can also be found with `Get-NetTCPConnection -State Listen -LocalPort 8080`.
 
-The backend loads the RGB and IR YOLO11 ONNX exports corresponding to `models/RGB y11 model.pt` and `models/IR model.pt`. The trainee screen runs exactly one selected model at a time on the current webcam feed, and uses the same selected model for uploaded-image detection. The camera reader continuously retains only its newest frame so inference cannot queue old video; the live preview and detector run independently. A separate thermal camera is not connected, and radar is unavailable because no radar model is provided. To select a live WebSocket mode directly, connect to `/ws?modality=rgb` or `/ws?modality=ir`. To call the image endpoint, send `modality=rgb` or `modality=ir` with the image to `/api/detect` (RGB is the default):
+The backend loads the RGB and IR YOLO11 ONNX exports corresponding to `models/RGB y11 model.pt` and `models/IR model.pt`. The trainee screen runs exactly one selected model at a time for browser-camera frames or uploaded images. For live detection, click **Start laptop camera** and allow the browser camera permission; the browser sends JPEG frames to the Render backend over `/ws?modality=rgb&source=browser` or `/ws?modality=ir&source=browser`, and inference results return over that WebSocket. The browser sends one frame at a time to avoid building up a stale-frame queue. Uploaded-image detection remains available without camera permission through `/api/detect`. A separate thermal camera is not connected, and radar is unavailable because no radar model is provided. The backend also retains the `source=server` WebSocket mode for a camera attached to its own host. To call the image endpoint, send `modality=rgb` or `modality=ir` with the image to `/api/detect` (RGB is the default):
 
 ```powershell
 curl.exe -X POST http://localhost:8080/api/detect -F "modality=ir" -F "file=@image.jpg"
@@ -65,7 +65,7 @@ Set the Vercel environment variable `VITE_API_BASE_URL` to `https://trinetra-kuv
 
 The backend allows the deployed frontend origin `https://trinetra-e9mv5rpqn-star-buster.vercel.app` and local Vite development by default. If your Vercel production domain changes, set the Render environment variable `FRONTEND_ORIGINS` to a comma-separated list of allowed origins, for example `https://your-app.vercel.app,https://your-custom-domain.example`, then redeploy the backend.
 
-The Render backend's live WebSocket stream uses a camera attached to the backend host. Since Render normally has no camera device, the WebSocket can connect without providing live camera frames. Uploaded-image detection, backend status, analytics, and assets are separate endpoints.
+The deployed frontend requires a user gesture to request camera permission. If camera access is unavailable or denied, the existing image-upload control can still submit an image to the Render inference API.
 
 ---
 *Developed with ❤️ by Team Star Busters for Smart India Hackathon.*

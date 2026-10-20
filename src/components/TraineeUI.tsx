@@ -27,8 +27,16 @@ export default function TraineeUI() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isDetecting, setIsDetecting] = useState(false);
   const [uploadError, setUploadError] = useState('');
+  const [cameraError, setCameraError] = useState('');
   const [modeWarning, setModeWarning] = useState('');
   const uploadedFrameUrl = useRef<string | null>(null);
+  const socketRef = useRef<WebSocket | null>(null);
+  const browserStreamRef = useRef<MediaStream | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const cameraCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const cameraCaptureTimerRef = useRef<number | null>(null);
+  const sendingFrameRef = useRef(false);
+  const cameraRequestIdRef = useRef(0);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date().toLocaleTimeString()), 1000);
@@ -39,7 +47,8 @@ export default function TraineeUI() {
     const connect = () => {
       setConnectionStatus('CONNECTING');
       setActiveModelStatus('CONNECTING');
-      socket = new WebSocket(`${WS_BASE_URL}/ws?modality=${modality}`);
+      socket = new WebSocket(`${WS_BASE_URL}/ws?modality=${modality}&source=browser`);
+      socketRef.current = socket;
       socket.onopen = () => setConnectionStatus('CONNECTED');
       socket.onmessage = event => {
         try {
@@ -47,6 +56,11 @@ export default function TraineeUI() {
           if (data.type === 'frame' && data.frame && !uploadedFrameUrl.current) {
             setFrame(data.frame);
             if (data.frame_size) setFrameSize(data.frame_size);
+          }
+          if (data.type === 'detections') sendingFrameRef.current = false;
+          if (data.type === 'error') {
+            sendingFrameRef.current = false;
+            setCameraError(data.message || 'The backend could not process a camera frame.');
           }
           const modeMatches = data.modality === modality;
           if (!modeMatches) {
@@ -77,7 +91,14 @@ export default function TraineeUI() {
           if (irStatus?.status) {
             setIrModelStatus(irStatus.model_loaded ? 'LOADED' : irStatus.status);
           }
-          if (data.has_webcam) {
+          if (data.camera_source === 'browser') {
+            if (data.has_webcam || browserStreamRef.current) {
+              setCameraStatus('ACTIVE');
+            } else {
+              setCameraStatus('WAITING');
+              setFrame(null);
+            }
+          } else if (data.has_webcam) {
             setCameraStatus('ACTIVE');
           } else if (data.has_webcam === false) {
             setCameraStatus('NO CAMERA');
@@ -88,6 +109,7 @@ export default function TraineeUI() {
         }
       };
       socket.onclose = () => {
+        sendingFrameRef.current = false;
         setConnectionStatus('RECONNECTING');
         if (mounted) reconnectTimer = window.setTimeout(connect, 1500);
       };
@@ -99,10 +121,15 @@ export default function TraineeUI() {
       clearInterval(timer);
       if (reconnectTimer) clearTimeout(reconnectTimer);
       socket?.close();
+      if (socketRef.current === socket) socketRef.current = null;
     };
   }, [modality]);
 
   useEffect(() => () => {
+    if (cameraCaptureTimerRef.current !== null) {
+      clearInterval(cameraCaptureTimerRef.current);
+    }
+    browserStreamRef.current?.getTracks().forEach(track => track.stop());
     if (uploadedFrameUrl.current) URL.revokeObjectURL(uploadedFrameUrl.current);
   }, []);
 
@@ -114,7 +141,100 @@ export default function TraineeUI() {
     setDetections([]);
     setInferenceMs(null);
     setModeWarning('');
+    setUploadError('');
     setModality(value);
+  };
+
+  const stopBrowserCamera = () => {
+    cameraRequestIdRef.current += 1;
+    if (cameraCaptureTimerRef.current !== null) {
+      clearInterval(cameraCaptureTimerRef.current);
+      cameraCaptureTimerRef.current = null;
+    }
+    browserStreamRef.current?.getTracks().forEach(track => track.stop());
+    browserStreamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+    sendingFrameRef.current = false;
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({ type: 'camera_stopped' }));
+    }
+    setCameraStatus('WAITING');
+    setFrame(null);
+    setDetections([]);
+    setInferenceMs(null);
+  };
+
+  const startBrowserCamera = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraError('Camera access is unavailable. Open this site over HTTPS in a supported browser.');
+      return;
+    }
+
+    setCameraError('');
+    setCameraStatus('STARTING');
+    const requestId = ++cameraRequestIdRef.current;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: 'user',
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+        },
+        audio: false,
+      });
+      if (requestId !== cameraRequestIdRef.current) {
+        stream.getTracks().forEach(track => track.stop());
+        return;
+      }
+      browserStreamRef.current = stream;
+      if (!videoRef.current) throw new Error('Camera preview could not be initialized.');
+      stream.getVideoTracks().forEach(track => {
+        track.addEventListener('ended', stopBrowserCamera, { once: true });
+      });
+      videoRef.current.srcObject = stream;
+      await videoRef.current.play();
+      if (requestId !== cameraRequestIdRef.current) return;
+      setCameraStatus('ACTIVE');
+
+      cameraCaptureTimerRef.current = window.setInterval(() => {
+        const video = videoRef.current;
+        const socket = socketRef.current;
+        if (
+          !video ||
+          video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+          !socket ||
+          socket.readyState !== WebSocket.OPEN ||
+          socket.bufferedAmount > 1_000_000 ||
+          sendingFrameRef.current
+        ) {
+          return;
+        }
+
+        const canvas = cameraCanvasRef.current ?? document.createElement('canvas');
+        cameraCanvasRef.current = canvas;
+        const scale = Math.min(1, 640 / video.videoWidth, 480 / video.videoHeight);
+        canvas.width = Math.round(video.videoWidth * scale);
+        canvas.height = Math.round(video.videoHeight * scale);
+        const context = canvas.getContext('2d');
+        if (!context || canvas.width === 0 || canvas.height === 0) return;
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        sendingFrameRef.current = true;
+        canvas.toBlob(blob => {
+          const activeSocket = socketRef.current;
+          if (blob && activeSocket?.readyState === WebSocket.OPEN) {
+            activeSocket.send(blob);
+          } else {
+            sendingFrameRef.current = false;
+          }
+        }, 'image/jpeg', 0.72);
+      }, 100);
+    } catch (error) {
+      if (requestId !== cameraRequestIdRef.current) return;
+      stopBrowserCamera();
+      setCameraError(
+        error instanceof Error ? error.message : 'Could not access the laptop camera.',
+      );
+    }
   };
 
   const detectImage = async (event: FormEvent<HTMLFormElement>) => {
@@ -162,8 +282,10 @@ export default function TraineeUI() {
 
   return (
     <div className="h-full w-full flex bg-gis-bg overflow-hidden text-[13px]">
+    <video ref={videoRef} className="hidden" autoPlay muted playsInline />
+    <canvas ref={cameraCanvasRef} className="hidden" />
       
-      {/* Left Sidebar - Layers & Sensors */}
+    {/* Left Sidebar - Layers & Sensors */}
       <div className="w-[280px] bg-gis-panel border-r border-gis-border flex flex-col shrink-0">
         <div className="px-4 py-3 border-b border-gis-border text-gis-muted uppercase tracking-wider text-[11px] font-semibold flex justify-between">
           <span>Layers</span>
@@ -214,8 +336,14 @@ export default function TraineeUI() {
              <img src={displayFrame} alt={uploadedFrame ? 'Uploaded detection input' : 'Live RGB camera'} className="w-full h-full object-contain" />
           ) : (
              <div className="text-center text-gis-muted">
-               <div className="font-medium text-[14px]">{cameraStatus === 'NO CAMERA' ? 'Camera unavailable' : 'Connecting to camera…'}</div>
-               <div className="mt-2 text-[12px]">Upload an image to run RGB or IR detection.</div>
+               <div className="font-medium text-[14px]">
+                 {cameraStatus === 'NO CAMERA'
+                   ? 'Backend camera unavailable'
+                   : cameraStatus === 'WAITING'
+                     ? 'Start your laptop camera to stream frames'
+                     : 'Connecting to camera…'}
+               </div>
+               <div className="mt-2 text-[12px]">Start the camera or upload an image to run RGB or IR detection.</div>
              </div>
           )}
         </div>
@@ -270,15 +398,41 @@ export default function TraineeUI() {
                <option value="radar" disabled>Radar (model unavailable)</option>
             </select>
             <p className="text-[11px] leading-relaxed text-gis-muted">
-               Select one detector at a time for RGB vision or infrared detection.
-               The current webcam is the video source for either selected model.
+               Select one detector at a time. Camera access stays on this device; frames are sent to the Render backend for inference.
             </p>
+            {cameraError && (
+              <p role="alert" className="rounded-lg border border-[#a64b4b] bg-[#3a2020] p-2 text-[11px] text-[#ffaaaa]">
+                {cameraError}
+              </p>
+            )}
+            {cameraStatus === 'ACTIVE' || cameraStatus === 'STARTING' ? (
+              <button
+                type="button"
+                onClick={stopBrowserCamera}
+                className="w-full rounded-xl border border-gis-border py-2 text-gis-muted hover:bg-gis-panel-light"
+              >
+                Stop laptop camera
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={startBrowserCamera}
+                disabled={connectionStatus !== 'CONNECTED'}
+                className="w-full rounded-xl bg-gis-active py-2 text-white hover:bg-opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Start laptop camera
+              </button>
+            )}
             {modeWarning && (
               <p role="alert" className="rounded-lg border border-[#a64b4b] bg-[#3a2020] p-2 text-[11px] leading-relaxed text-[#ffaaaa]">
                 {modeWarning}
               </p>
             )}
+            <label className="block text-[11px] text-gis-muted" htmlFor="detection-image">
+              Or upload an image for a one-time detection
+            </label>
             <input
+              id="detection-image"
               type="file"
               accept="image/*"
               onChange={event => setSelectedFile(event.target.files?.[0] ?? null)}
