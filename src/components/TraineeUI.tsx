@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { API_BASE_URL, WS_BASE_URL } from '../api';
 
 type Modality = 'rgb' | 'ir';
 type Detection = {
@@ -38,7 +39,7 @@ export default function TraineeUI() {
     const connect = () => {
       setConnectionStatus('CONNECTING');
       setActiveModelStatus('CONNECTING');
-      socket = new WebSocket(`ws://localhost:8080/ws?modality=${modality}`);
+      socket = new WebSocket(`${WS_BASE_URL}/ws?modality=${modality}`);
       socket.onopen = () => setConnectionStatus('CONNECTED');
       socket.onmessage = event => {
         try {
@@ -126,7 +127,7 @@ export default function TraineeUI() {
     body.append('modality', modality);
 
     try {
-      const response = await fetch('http://localhost:8080/api/detect', {
+      const response = await fetch(`${API_BASE_URL}/api/detect`, {
         method: 'POST',
         body,
       });

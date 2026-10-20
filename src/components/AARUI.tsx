@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
-
-const API_URL = 'http://localhost:8080';
+import { API_BASE_URL } from '../api';
 const RGB_COLOR = '#55aaff';
 const IR_COLOR = '#ff9955';
 
@@ -45,7 +44,7 @@ const evaluationPlots = [
 ];
 
 function assetUrl(filename: string) {
-  return `${API_URL}/api/assets/${encodeURIComponent(filename)}`;
+  return `${API_BASE_URL}/api/assets/${encodeURIComponent(filename)}`;
 }
 
 export default function AARUI() {
@@ -54,7 +53,7 @@ export default function AARUI() {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch(`${API_URL}/api/analytics`, { signal: controller.signal })
+    fetch(`${API_BASE_URL}/api/analytics`, { signal: controller.signal })
       .then(async response => {
         if (!response.ok) {
           throw new Error(`Analytics request failed (${response.status})`);

@@ -12,6 +12,7 @@ import ast
 import base64
 import csv
 import json
+import os
 import platform
 import threading
 import time
@@ -202,10 +203,19 @@ class OnnxYoloDetector:
 
 app = FastAPI(title="SIH26247 — AI Drone Detection Backend")
 
+frontend_origins = [
+    origin.strip().rstrip("/")
+    for origin in os.getenv(
+        "FRONTEND_ORIGINS",
+        "https://trinetra-e9mv5rpqn-star-buster.vercel.app,http://localhost:5173",
+    ).split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=frontend_origins,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

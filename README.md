@@ -57,5 +57,15 @@ curl.exe -X POST http://localhost:8080/api/detect -F "modality=ir" -F "file=@ima
 
 The AAR screen reads the recorded run metrics and GPS detections from `models/prod_summary.json` and `models/prod_gps_track_log.csv`. Its replay video, evaluation plots, trajectory image, and analysis notebook are served from the same `models/` folder.
 
+## Deploy the frontend to Vercel
+
+Import the repository into Vercel and set the project root to `Trinetra` if the repository root contains this project as a subdirectory. Vercel will detect Vite; use `npm run build` as the build command and `dist` as the output directory.
+
+Set the Vercel environment variable `VITE_API_BASE_URL` to `https://trinetra-kuvl.onrender.com`, then deploy or redeploy. The frontend uses this URL for HTTP API requests, assets, and the `wss://` live connection. Production builds default to this Render backend if the variable is not set; local development defaults to `http://localhost:8080`.
+
+The backend allows the deployed frontend origin `https://trinetra-e9mv5rpqn-star-buster.vercel.app` and local Vite development by default. If your Vercel production domain changes, set the Render environment variable `FRONTEND_ORIGINS` to a comma-separated list of allowed origins, for example `https://your-app.vercel.app,https://your-custom-domain.example`, then redeploy the backend.
+
+The Render backend's live WebSocket stream uses a camera attached to the backend host. Since Render normally has no camera device, the WebSocket can connect without providing live camera frames. Uploaded-image detection, backend status, analytics, and assets are separate endpoints.
+
 ---
 *Developed with ❤️ by Team Star Busters for Smart India Hackathon.*

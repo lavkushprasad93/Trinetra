@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
-
-const API_URL = 'http://localhost:8080';
+import { API_BASE_URL } from '../api';
 
 type Scenario = {
   environment: string;
@@ -33,7 +32,7 @@ export default function InstructorUI() {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch(`${API_URL}/api/status`, { signal: controller.signal })
+    fetch(`${API_BASE_URL}/api/status`, { signal: controller.signal })
       .then(async response => {
         if (!response.ok) throw new Error(`Model status request failed (${response.status})`);
         return response.json() as Promise<BackendStatus>;
@@ -135,7 +134,7 @@ export default function InstructorUI() {
             <section className="rounded-2xl border border-gis-border bg-gis-panel p-5">
               <h2 className="text-gis-accent">Recorded GPS trajectory</h2>
               <img
-                src={`${API_URL}/api/assets/${encodeURIComponent('TracK GPS Trejectory.jpeg')}`}
+                src={`${API_BASE_URL}/api/assets/${encodeURIComponent('TracK GPS Trejectory.jpeg')}`}
                 alt="Recorded GPS track trajectory"
                 className="mt-3 aspect-[4/3] w-full rounded-xl border border-gis-border bg-[#111] object-contain"
               />
