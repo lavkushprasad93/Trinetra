@@ -63,7 +63,7 @@ Import the repository into Vercel and set the project root to `Trinetra` if the 
 
 Set the Vercel environment variable `VITE_API_BASE_URL` to `https://trinetra-kuvl.onrender.com`, then deploy or redeploy. The frontend uses this URL for HTTP API requests, assets, and the `wss://` live connection. Production builds default to this Render backend if the variable is not set; local development defaults to `http://localhost:8080`.
 
-The backend allows the deployed frontend origin `https://trinetra-e9mv5rpqn-star-buster.vercel.app` and local Vite development by default. If your Vercel production domain changes, set the Render environment variable `FRONTEND_ORIGINS` to a comma-separated list of allowed origins, for example `https://your-app.vercel.app,https://your-custom-domain.example`, then redeploy the backend.
+The backend allows the deployed frontend origins `https://trinetra-e9mv5rpqn-star-buster.vercel.app` and `https://trinetra-tawny-nine.vercel.app`, plus local Vite development by default. If your Vercel production domain changes, set the Render environment variable `FRONTEND_ORIGINS` to a comma-separated list of allowed origins, for example `https://your-app.vercel.app,https://your-custom-domain.example`, then redeploy the backend.
 
 The deployed frontend requires a user gesture to request camera permission. If camera access is unavailable or denied, the existing image-upload control can still submit an image to the Render inference API.
 

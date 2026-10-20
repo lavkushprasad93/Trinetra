@@ -207,7 +207,8 @@ frontend_origins = [
     origin.strip().rstrip("/")
     for origin in os.getenv(
         "FRONTEND_ORIGINS",
-        "https://trinetra-e9mv5rpqn-star-buster.vercel.app,http://localhost:5173",
+        "https://trinetra-e9mv5rpqn-star-buster.vercel.app,"
+        "https://trinetra-tawny-nine.vercel.app,http://localhost:5173",
     ).split(",")
     if origin.strip()
 ]
